@@ -237,7 +237,10 @@ async def cmd_start(message: types.Message):
         [KeyboardButton(text="⚙️ Настройки")],
     ]
     if WEBAPP_URL:
-        keyboard_rows.insert(0, [KeyboardButton(text="📱 Открыть приложение", web_app=WebAppInfo(url=WEBAPP_URL.rstrip("/") + "/webapp/"))])
+        url = WEBAPP_URL.rstrip("/")
+        if url and not url.endswith("/"):
+            url = url + "/"
+        keyboard_rows.insert(0, [KeyboardButton(text="📱 Открыть приложение", web_app=WebAppInfo(url=url))])
     keyboard = ReplyKeyboardMarkup(keyboard=keyboard_rows, resize_keyboard=True)
     await message.answer(
         "👋 <b>Парсер для риелторов</b>\n\n"
