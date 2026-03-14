@@ -3,13 +3,21 @@ import asyncio
 import re
 import json
 import random
+import ssl
 from pathlib import Path
 from datetime import datetime
+from urllib.parse import quote
+
+import aiohttp
 from logging_config import get_logger
 from database import SessionLocal, UserFilter, Ad, run_in_thread
 from selenium_fetcher import fetch_page_selenium
+from config import ZENROWS_API_KEY, SCRAPINGBEE_API_KEY
 
 logger = get_logger('parser')
+_ssl = ssl.create_default_context()
+_ssl.check_hostname = False
+_ssl.verify_mode = ssl.CERT_NONE
 SOURCE_CIAN = "cian"
 
 
@@ -211,6 +219,46 @@ def extract_items_from_cian_html(html):
     return items
 
 
+async def _fetch_cian_page(url: str) -> str | None:
+    """Загрузка страницы ЦИАН: ZenRows → ScrapingBee → Selenium."""
+    use_zenrows = ZENROWS_API_KEY and ZENROWS_API_KEY != "YOUR_API_KEY_HERE"
+    use_sb = SCRAPINGBEE_API_KEY and SCRAPINGBEE_API_KEY != "YOUR_SCRAPINGBEE_KEY_HERE"
+
+    if use_zenrows:
+        params = {
+            "apikey": ZENROWS_API_KEY,
+            "url": url,
+            "js_render": "true",
+            "wait": "15000",
+            "premium_proxy": "true",
+            "antibot": "true",
+            "proxy_country": "ru",
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "https://api.zenrows.com/v1/",
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=90),
+                ssl=_ssl,
+            ) as r:
+                if r.status == 200:
+                    text = await r.text()
+                    if "captcha" not in text.lower() and "доступ ограничен" not in text.lower():
+                        logger.info("ЦИАН: загружено через ZenRows, %s байт", len(text))
+                        return text
+
+    if use_sb:
+        api_url = f"https://app.scrapingbee.com/api/v1/?api_key={SCRAPINGBEE_API_KEY}&url={quote(url)}&render_js=true&wait=15000"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(api_url, timeout=aiohttp.ClientTimeout(total=90), ssl=_ssl) as r:
+                if r.status == 200:
+                    text = await r.text()
+                    logger.info("ЦИАН: загружено через ScrapingBee, %s байт", len(text))
+                    return text
+
+    return await run_in_thread(fetch_page_selenium, url)
+
+
 async def run_cian_parser(send_new_callback=None, send_removed_callback=None):
     """Запуск парсера ЦИАН по активным фильтрам с source=cian."""
     filters = await run_in_thread(_db_get_active_cian_filters)
@@ -226,7 +274,7 @@ async def run_cian_parser(send_new_callback=None, send_removed_callback=None):
         delay = random.uniform(3, 8) if i > 0 else random.uniform(1, 3)
         await asyncio.sleep(delay)
         logger.info(f"ЦИАН: парсинг {url[:60]}...")
-        html = await run_in_thread(fetch_page_selenium, url)
+        html = await _fetch_cian_page(url)
         if not html:
             logger.error("ЦИАН: не удалось загрузить страницу")
             continue

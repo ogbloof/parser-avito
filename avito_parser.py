@@ -103,16 +103,27 @@ async def extract_price_value(price_str):
         return None
 
 # --- DB Функции ---
+SOURCE_AVITO = "avito"
+
+
 def _db_get_active_filters():
+    """Только фильтры Авито с URL."""
     db = SessionLocal()
     try:
-        filters = db.query(UserFilter).filter(UserFilter.is_active == True).all()
-        logger.info(f"📋 Активных фильтров: {len(filters)}")
+        filters = (
+            db.query(UserFilter)
+            .filter(
+                UserFilter.is_active == True,
+                UserFilter.source == SOURCE_AVITO,
+                UserFilter.search_url.isnot(None),
+                UserFilter.search_url != "",
+            )
+            .all()
+        )
+        logger.info(f"📋 Активных фильтров Авито: {len(filters)}")
         return filters
     finally:
         db.close()
-
-SOURCE_AVITO = "avito"
 
 def _db_get_ad_by_id(external_id, source=SOURCE_AVITO):
     db = SessionLocal()
@@ -570,11 +581,10 @@ async def run_parser(send_new_ad_callback=None, send_removed_ad_callback=None):
                 try:
                     avito_id = item["id"]
 
-                    # Фильтр по району: если задан district_filter, оставляем только те,
-                    # где он содержится в адресе (из item["address"])
+                    # Фильтр по району: если задан — проверяем адрес; если адрес пустой — не отфильтровываем
                     if district_filter:
-                        addr = (item.get("address") or "").lower()
-                        if district_filter not in addr:
+                        addr = (item.get("address") or "").strip().lower()
+                        if addr and district_filter not in addr:
                             continue
 
                     current_ids.append(avito_id)

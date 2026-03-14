@@ -360,17 +360,25 @@ async def cmd_stats(message: types.Message):
 async def cmd_set_url(message: types.Message, state: FSMContext):
     if not await _require_subscription(message):
         return
-    await message.answer("🔗 Отправь ссылку на поиск с Авито:\n\n1. Открой avito.ru в браузере\n2. Выбери город и фильтры\n3. Скопируй ссылку из адресной строки\n4. Вставь её сюда")
+    await message.answer(
+        "🔗 <b>Фильтр Авито</b>\n\n"
+        "1. Открой avito.ru в браузере\n"
+        "2. Выбери город, цену, район\n"
+        "3. Скопируй ссылку из адресной строки\n"
+        "4. Вставь сюда\n\n"
+        "Пример: https://www.avito.ru/moskva/kvartiry/prodam-ASgBAgICAUSSA8YQ?priceMin=5000000&priceMax=15000000",
+        parse_mode="HTML",
+    )
     await state.set_state(SetupState.url_input)
 
 @dp.message(SetupState.url_input)
 async def process_url_input(message: types.Message, state: FSMContext):
     url = message.text.strip()
-    
-    if not url.startswith('https://www.avito.ru'):
-        await message.answer("❌ Это не ссылка на Авито. Попробуй ещё раз:")
+    if "avito.ru" not in url or not url.startswith("http"):
+        await message.answer("❌ Это не ссылка на Авито. Пришли ссылку вида https://www.avito.ru/...")
         return
-    
+    url = url.replace("m.avito.ru", "www.avito.ru")
+
     def save_filter(uid, search_url):
         db = SessionLocal()
         try:
@@ -405,10 +413,9 @@ async def cmd_settings(message: types.Message):
         return
     db = SessionLocal()
     try:
-        uf = db.query(UserFilter).filter(
-            UserFilter.user_id == message.from_user.id,
-            UserFilter.source == "avito",
-        ).first()
+        uid = message.from_user.id if message.from_user else 0
+        uf = db.query(UserFilter).filter(UserFilter.user_id == uid, UserFilter.source == "avito").first()
+        uf_cian = db.query(UserFilter).filter(UserFilter.user_id == uid, UserFilter.source == "cian").first()
         if uf:
             current = (
                 f"Текущий фильтр Авито:\n"
@@ -421,15 +428,15 @@ async def cmd_settings(message: types.Message):
     finally:
         db.close()
 
+    cian_status = "настроен ✅" if (uf_cian and uf_cian.search_url) else "не настроен"
+    cian_text = f"— ЦИАН: {cian_status}\n\n"
+
     await message.answer(
-        "⚙️ <b>Настройки</b>\n\n"
-        f"{current}"
-        "1) <b>Фильтр Авито по ссылке</b>\n"
-        "   Используй команду /set_url и пришли ссылку на поиск с avito.ru\n\n"
-        "2) <b>Фильтр Авито вручную (город, район, цена)</b>\n"
-        "   Используй команду /manual и следуй шагам бота\n\n"
-        "3) <b>Фильтр ЦИАН</b>\n"
-        "   Отправь слово «ЦИАН» и потом ссылку на поиск с cian.ru\n",
+        "⚙️ <b>Настройки фильтров</b>\n\n"
+        f"{current}{cian_text}"
+        "<b>Авито</b> — /set_url (пришли ссылку) или /manual (город, район, цена)\n\n"
+        "<b>ЦИАН</b> — /set_cian или напиши «ЦИАН», затем ссылку\n\n"
+        "После настройки нажми «🔍 Запустить поиск»",
         parse_mode="HTML",
     )
 
@@ -501,11 +508,12 @@ async def cmd_search(message: types.Message):
     if not await _require_subscription(message):
         return
     await _answer_with_retry(message, "🔄 Ищу по Авито и ЦИАН...")
-    # Новые объявления теперь смотрим через кнопку «🆕 Новые объявления»,
-    # поэтому здесь не шлём пуши, а только обновляем базу.
-    await run_parser(None, notify_removed)
-    await run_cian_parser(None, notify_removed)
-    await _answer_with_retry(message, "✅ Готово")
+    await run_parser(notify_new, notify_removed)
+    await run_cian_parser(notify_new, notify_removed)
+    await _answer_with_retry(
+        message,
+        "✅ Готово. Проверь «🆕 Новые объявления».",
+    )
 
 
 @dp.message(Command("new_ads"))
@@ -653,13 +661,20 @@ async def cb_my_ads_page(callback: types.CallbackQuery):
         await callback.message.answer(caption, parse_mode="HTML", reply_markup=kb)
     await callback.answer()
 
+@dp.message(Command("set_cian"))
 @dp.message(F.text == "🔗 ЦИАН")
+@dp.message(F.text.lower() == "циан")
 async def cmd_cian_setup(message: types.Message, state: FSMContext):
     if not await _require_subscription(message):
         return
     await message.answer(
-        "Отправь ссылку на поиск ЦИАН (скопируй из браузера после настройки фильтров).\n\n"
-        "Пример: https://www.cian.ru/cat.php?deal_type=sale&offer_type=flat&region=4593"
+        "🔗 <b>Фильтр ЦИАН</b>\n\n"
+        "1. Открой cian.ru в браузере\n"
+        "2. Выбери город, цену, тип недвижимости\n"
+        "3. Скопируй ссылку из адресной строки\n"
+        "4. Вставь сюда\n\n"
+        "Пример: https://www.cian.ru/cat.php?deal_type=sale&offer_type=flat&region=4593",
+        parse_mode="HTML",
     )
     await state.set_state(CianUrlState.waiting_for_cian_url)
 

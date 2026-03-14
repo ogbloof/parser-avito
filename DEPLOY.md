@@ -131,6 +131,13 @@ git push -u origin main
 - Первый запрос после паузы может идти 30–50 секунд.
 - Чтобы «будить» сервис, можно настроить cron-job.org: каждые 10 минут делать GET на `https://твой-сервис.onrender.com/api/user` (без initData вернёт 401, но сервис проснётся).
 
+### IP Render (для whitelist)
+
+Исходящие запросы Render могут идти с подсетей:
+- `74.220.48.0/24`
+- `74.220.56.0/24`  
+(если сервис требует whitelist по IP)
+
 ### Selenium на Render
 
 - Selenium/Playwright на Render часто не работают из-за отсутствия Chromium.
