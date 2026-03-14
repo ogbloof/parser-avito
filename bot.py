@@ -508,12 +508,40 @@ async def cmd_search(message: types.Message):
     if not await _require_subscription(message):
         return
     await _answer_with_retry(message, "🔄 Ищу по Авито и ЦИАН...")
-    await run_parser(notify_new, notify_removed)
-    await run_cian_parser(notify_new, notify_removed)
-    await _answer_with_retry(
-        message,
-        "✅ Готово. Проверь «🆕 Новые объявления».",
-    )
+    avito_res = await run_parser(notify_new, notify_removed) or (0, 0, 0)
+    cian_res = await run_cian_parser(notify_new, notify_removed) or (0, 0, 0)
+    if len(avito_res) == 2:
+        avito_res = (avito_res[0], avito_res[1], avito_res[1])
+    if len(cian_res) == 2:
+        cian_res = (cian_res[0], cian_res[1], cian_res[1])
+    avito_new, avito_ok, avito_total = avito_res[0], avito_res[1], avito_res[2]
+    cian_new, cian_ok, cian_total = cian_res[0], cian_res[1], cian_res[2]
+    total_new = avito_new + cian_new
+    has_filters = avito_total + cian_total > 0
+    no_success = avito_ok == 0 and cian_ok == 0
+    if not has_filters:
+        await _answer_with_retry(
+            message,
+            "⚠️ Фильтры не настроены.\n\n"
+            "• Авито: /set_url — пришли ссылку с avito.ru\n"
+            "• ЦИАН: /set_cian или напиши «ЦИАН», затем ссылку с cian.ru\n\n"
+            "После настройки снова нажми «🔍 Запустить поиск».",
+        )
+        return
+    if no_success:
+        await _answer_with_retry(
+            message,
+            "⚠️ Не удалось загрузить страницы (Авито/ЦИАН).\n\n"
+            "Проверь: ZENROWS_API_KEY в настройках Render, ссылки в фильтрах. Попробуй позже.",
+        )
+        return
+    if total_new > 0:
+        await _answer_with_retry(message, f"✅ Найдено новых: {total_new}. Смотри «🆕 Новые объявления».")
+    else:
+        await _answer_with_retry(
+            message,
+            "✅ Готово. Новых объявлений пока нет. Загляни позже.",
+        )
 
 
 @dp.message(Command("new_ads"))
@@ -1244,4 +1272,9 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    logger.info("PORT=%s API_PORT=%s WEBAPP_URL=%s", os.environ.get("PORT"), API_PORT, "OK" if WEBAPP_URL else "не задан")
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        logger.exception("Критическая ошибка при запуске: %s", e)
+        raise

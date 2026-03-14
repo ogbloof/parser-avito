@@ -260,13 +260,15 @@ async def _fetch_cian_page(url: str) -> str | None:
 
 
 async def run_cian_parser(send_new_callback=None, send_removed_callback=None):
-    """Запуск парсера ЦИАН по активным фильтрам с source=cian."""
+    """Запуск парсера ЦИАН по активным фильтрам с source=cian. Возвращает (new_count, processed)."""
     filters = await run_in_thread(_db_get_active_cian_filters)
+    num_filters = len(filters)
     if not filters:
-        logger.info("ЦИАН: нет активных фильтров с источником ЦИАН")
-        return
+        logger.info("ЦИАН: нет активных фильтров. Пользователь должен отправить ЦИАН и ссылку.")
+        return 0, 0, 0
 
     new_count = 0
+    processed = 0
     for i, uf in enumerate(filters):
         url = (uf.search_url or "").strip()
         if not url or "cian.ru" not in url:
@@ -283,8 +285,9 @@ async def run_cian_parser(send_new_callback=None, send_removed_callback=None):
             continue
         items = extract_items_from_cian_html(html)
         if not items:
-            logger.warning("ЦИАН: объявления не найдены")
+            logger.warning("ЦИАН: объявления не найдены (проверь структуру страницы или ZenRows)")
             continue
+        processed += 1
         logger.info(f"ЦИАН: найдено {len(items)} объявлений")
         current_ids = []
         for item in items[:15]:
@@ -320,7 +323,8 @@ async def run_cian_parser(send_new_callback=None, send_removed_callback=None):
         if removed and send_removed_callback:
             for ad in removed:
                 await send_removed_callback(uf.user_id, ad)
-    logger.info(f"ЦИАН: готово. Новых: {new_count}")
+    logger.info(f"ЦИАН: готово. Проверено фильтров: {processed}/{num_filters}, новых: {new_count}")
+    return new_count, processed, num_filters
 
 
 async def parse_single_cian_ad(user_id: int, url: str):

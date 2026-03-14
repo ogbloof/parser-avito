@@ -356,7 +356,7 @@ def check_content(html):
         or 'data-marker="item-photo-sliderLink"' in html
         or 'data-marker="item-price"' in html
     )
-    has_json = '"items"' in html or '"catalogItems"' in html
+    has_json = '"items"' in html or '"catalogItems"' in html or '"listing"' in html or '"serpItems"' in html
 
     # Явная страница блокировки Авито: заголовок «Доступ ограничен: проблема с IP» или текст про капчу/ограничение
     blocked_phrases = [
@@ -432,8 +432,69 @@ def extract_items_from_html(html):
             logger.debug(f"JSON parse {pattern_name}: {e}")
             continue
 
-    # Способ 2: HTML — ссылки на объявления (любой город/категория)
-    # В путях теперь бывают точки и проценты, расширяем допустимые символы.
+    # Способ 2: data-item-id в разметке (актуальная вёрстка Авито)
+    item_id_re = re.compile(r'data-item-id=["\']?(\d+)["\']?', re.I)
+    for m in item_id_re.finditer(html):
+        item_id = m.group(1)
+        if any(x["id"] == item_id for x in items):
+            continue
+        idx = m.start()
+        context = html[max(0, idx - 1500) : idx + 2500]
+        title = "Объявление"
+        t = re.search(r'data-marker="item-title"[^>]*>.*?<[^>]*>([^<]{5,150})</', context, re.S)
+        if not t:
+            t = re.search(r'aria-label="([^"]{10,150})"', context)
+        if t:
+            title = re.sub(r"\s+", " ", t.group(1).strip())[:100]
+        price = "Цена не указана"
+        p = re.search(r'data-marker="item-price-value"[^>]*>([^<]+)', context)
+        if not p:
+            p = re.search(r"(\d[\d\s]*)\s*₽", context)
+        if p:
+            price = p.group(1).strip()
+        url = ""
+        link = re.search(r'href="(https?://(?:www\.|m\.)?avito\.ru/[^"]+)"', context)
+        if link:
+            url = link.group(1).split('"')[0]
+        if not url:
+            link = re.search(r'href="(/(?:[a-z0-9._%-]+/)+[^"]*_?' + re.escape(item_id) + r'(?:\?[^"]*)?)"', context)
+            if link:
+                url = "https://www.avito.ru" + link.group(1)
+        if not url:
+            url = f"https://www.avito.ru/item/{item_id}"
+        items.append({
+            "id": item_id,
+            "title": title,
+            "price": price,
+            "url": url,
+            "address": "",
+        })
+    if items:
+        logger.debug(f"Извлечено из data-item-id: {len(items)}")
+        return items
+
+    # Способ 3: полные ссылки на avito.ru с id в конце пути
+    full_url_re = re.compile(r'href="(https?://(?:www\.|m\.)?avito\.ru/[^"]*?/(\d+)(?:\?[^"]*)?)"', re.I)
+    for m in full_url_re.finditer(html):
+        full_url, item_id = m.group(1), m.group(2)
+        if any(x["id"] == item_id for x in items):
+            continue
+        idx = m.start()
+        context = html[max(0, idx - 1000) : idx + 1500]
+        title = "Объявление"
+        t = re.search(r'>([^<]{10,120})<', context)
+        if t:
+            title = re.sub(r"\s+", " ", t.group(1).strip())[:100]
+        price = "Цена не указана"
+        p = re.search(r"(\d[\d\s]*)\s*₽", context)
+        if p:
+            price = p.group(0).strip()
+        items.append({"id": item_id, "title": title, "price": price, "url": full_url.split('"')[0], "address": ""})
+    if items:
+        logger.debug(f"Извлечено из полных URL: {len(items)}")
+        return items
+
+    # Способ 4: относительные ссылки на объявления (старая вёрстка)
     link_pattern = re.compile(r'href="(/(?:[a-z0-9._%-]+/)+(?:[a-z0-9._%-]+)_(\d+)(?:\?[^"]*)?)"', re.I)
     seen = set()
     for m in link_pattern.finditer(html):
@@ -445,21 +506,18 @@ def extract_items_from_html(html):
         seen.add(item_id)
         full_url = f"https://www.avito.ru{path}"
         idx = m.start()
-        # Берём более широкий контекст вокруг ссылки, чтобы зацепить цену и адрес
         context = html[max(0, idx - 2000) : idx + 2000]
         title = "Объявление"
         t = re.search(r'>([^<]{10,120})<', context)
         if t:
             title = t.group(1).strip()[:100]
         price = "Цена не указана"
-        # Сначала пытаемся вытащить по новому маркеру item-price-value
         p = re.search(r'data-marker="item-price-value"[^>]*>([^<]+₽)', context)
         if not p:
-            p = re.search(r'(\d[\d\s]*)\s*₽', context)
+            p = re.search(r"(\d[\d\s]*)\s*₽", context)
         if p:
             price = p.group(1)
         address = ""
-        # Адрес в блоке data-marker="item-address" — очищаем от тегов
         addr_block = re.search(r'data-marker="item-address".{0,600}</div>', context, re.S)
         if addr_block:
             raw = re.sub(r"<[^>]+>", " ", addr_block.group(0))
@@ -473,7 +531,7 @@ def extract_items_from_html(html):
             "address": address,
         })
     if items:
-        logger.debug(f"Извлечено из HTML: {len(items)}")
+        logger.debug(f"Извлечено из HTML ссылок: {len(items)}")
     return items
 
 def _random_delay(min_sec=2, max_sec=6):
@@ -492,11 +550,13 @@ async def run_parser(send_new_ad_callback=None, send_removed_ad_callback=None):
         logger.info("ℹ️ Нет ZENROWS/SCRAPINGBEE — только Selenium. Рекомендуется задать ZENROWS_API_KEY в .env (свой прокси тогда не нужен).")
 
     filters = await run_in_thread(_db_get_active_filters)
+    num_filters = len(filters)
     if not filters:
-        logger.warning("⚠️ Нет фильтров!")
-        return
+        logger.warning("⚠️ Нет фильтров Авито! Пользователь должен вызвать /set_url.")
+        return 0, 0, 0
 
     new_count = 0
+    processed = 0
     connector = aiohttp.TCPConnector(ssl=ssl_context, limit=10)
 
     async with aiohttp.ClientSession(connector=connector) as session:
@@ -531,6 +591,7 @@ async def run_parser(send_new_ad_callback=None, send_removed_ad_callback=None):
                 logger.error("[Парсер] ❌ Все попытки загрузки страницы не удались")
                 continue
 
+            processed += 1
             logger.info(f"[Парсер] Получено HTML: {len(html)} байт, первые 150 символов: {html[:150]!r}")
             content_info = check_content(html)
             logger.info(
@@ -632,10 +693,10 @@ async def run_parser(send_new_ad_callback=None, send_removed_ad_callback=None):
                     for ad in removed:
                         await send_removed_ad_callback(user_filter.user_id, ad)
             
-            # Небольшая пауза между фильтрами
             await asyncio.sleep(2)
 
-    logger.info(f"✅ Готово. Новых: {new_count}")
+    logger.info(f"✅ Авито: проверено фильтров {processed}/{num_filters}, новых объявлений {new_count}")
+    return new_count, processed, num_filters
 
 async def parse_single_ad(user_id: int, ad_url: str, max_retries=3):
     """Парсит одно объявление"""
