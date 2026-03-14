@@ -21,7 +21,7 @@ from database import (
     STATUS_MEETING_SET, STATUS_DEAL, STATUS_LOST, STATUS_CLOSED,
     get_or_create_user, grant_subscription, check_subscription,
 )
-from avito_parser import run_parser, parse_single_ad
+from avito_parser import run_parser, parse_single_ad, test_one_avito_url
 from cian_parser import run_cian_parser, parse_single_cian_ad
 from selenium_fetcher import check_proxy
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -436,7 +436,7 @@ async def cmd_settings(message: types.Message):
         f"{current}{cian_text}"
         "<b>Авито</b> — /set_url (пришли ссылку) или /manual (город, район, цена)\n\n"
         "<b>ЦИАН</b> — /set_cian или напиши «ЦИАН», затем ссылку\n\n"
-        "После настройки нажми «🔍 Запустить поиск»",
+            "Если поиск не находит объявления — /check_parse (диагностика)",
         parse_mode="HTML",
     )
 
@@ -1223,6 +1223,54 @@ async def cmd_check_proxies(message: types.Message):
         "<b>Проверка списка прокси</b>\n\n" + "\n".join(results),
         parse_mode="HTML",
     )
+
+@dp.message(Command("check_parse"))
+async def cmd_check_parse(message: types.Message):
+    """Диагностика: почему не находит объявления. Показывает фильтры и тестовый запрос."""
+    if not message.from_user:
+        return
+    uid = message.from_user.id
+    db = SessionLocal()
+    try:
+        avito = db.query(UserFilter).filter(UserFilter.user_id == uid, UserFilter.source == "avito", UserFilter.search_url.isnot(None)).all()
+        cian = db.query(UserFilter).filter(UserFilter.user_id == uid, UserFilter.source == "cian", UserFilter.search_url.isnot(None)).all()
+    finally:
+        db.close()
+
+    lines = ["🔬 <b>Проверка парсинга</b>\n"]
+    lines.append(f"• Фильтров Авито: {len(avito)}")
+    lines.append(f"• Фильтров ЦИАН: {len(cian)}")
+    if not avito and not cian:
+        await message.answer(
+            "⚠️ Нет ни одного фильтра.\n\n"
+            "Авито: /set_url и пришли ссылку с avito.ru\n"
+            "ЦИАН: /set_cian или напиши «ЦИАН», затем ссылку с cian.ru",
+            parse_mode="HTML",
+        )
+        return
+
+    if avito:
+        url = (avito[0].search_url or "").strip()
+        if url:
+            await message.answer("⏳ Загружаю страницу Авито (15–30 сек)...")
+            try:
+                res = await test_one_avito_url(url)
+                lines.append(f"\n<b>Тест Авито</b> (первый фильтр):")
+                lines.append(f"URL: {res['url_short']}")
+                if res.get("error"):
+                    lines.append(f"❌ {res['error']}")
+                else:
+                    lines.append(f"HTML: {res['html_len']} байт")
+                    if res["blocked"]:
+                        lines.append(f"🚫 Блокировка: {res.get('blocked_reason') or 'да'}")
+                    else:
+                        lines.append(f"Объявлений извлечено: {res['items_count']}")
+                        if res["items_count"] == 0:
+                            lines.append("\nЕсли 0 — Авито сменил вёрстку или ссылка ведёт на пустой поиск. Проверь ссылку в браузере.")
+            except Exception as e:
+                lines.append(f"\n❌ Ошибка: {e}")
+    await message.answer("\n".join(lines), parse_mode="HTML")
+
 
 @dp.message(Command("debug"))
 @dp.message(F.text == "🛠 Отладка / настройки")

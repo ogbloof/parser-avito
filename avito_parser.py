@@ -540,6 +540,35 @@ def _random_delay(min_sec=2, max_sec=6):
     return delay
 
 
+async def test_one_avito_url(url: str) -> dict:
+    """
+    Проверяет один URL Авито: загрузка + извлечение объявлений.
+    Возвращает dict: url_short, html_len, blocked, blocked_reason, items_count, error.
+    """
+    result = {"url_short": url[:60] + "..." if len(url) > 60 else url, "html_len": 0, "blocked": False, "blocked_reason": None, "items_count": 0, "error": None}
+    use_zenrows = ZENROWS_API_KEY and ZENROWS_API_KEY != "YOUR_API_KEY_HERE"
+    mobile_url = convert_to_mobile(url)
+    html = None
+    connector = aiohttp.TCPConnector(ssl=ssl_context, limit=5)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        if use_zenrows:
+            html = await fetch_with_service(session, mobile_url, "zenrows")
+            if not html and mobile_url != url:
+                html = await fetch_with_service(session, url, "zenrows")
+        if not html:
+            html = await run_in_thread(fetch_page_selenium, mobile_url)
+    if not html:
+        result["error"] = "Не удалось загрузить страницу (проверь ZENROWS_API_KEY или прокси)"
+        return result
+    result["html_len"] = len(html)
+    content = check_content(html)
+    result["blocked"] = content["blocked"]
+    result["blocked_reason"] = content.get("blocked_reason")
+    items = extract_items_from_html(html)
+    result["items_count"] = len(items)
+    return result
+
+
 async def run_parser(send_new_ad_callback=None, send_removed_ad_callback=None):
     """Основной парсер: приоритет Selenium при отсутствии API ключей, rate limiting."""
     logger.info("🚀 Запуск парсера Авито")
