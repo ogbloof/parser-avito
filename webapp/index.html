@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Парсер для риелторов</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="app.css">
+  <script src="config.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header class="header">
+      <h1>Парсер</h1>
+      <nav class="tabs">
+        <button class="tab active" data-tab="new">Новые</button>
+        <button class="tab" data-tab="mine">Мои объекты</button>
+        <button class="tab" data-tab="favorite">Избранные</button>
+      </nav>
+    </header>
+    <main class="content">
+      <div id="loading" class="loading">Загрузка...</div>
+      <div id="error" class="error" hidden></div>
+      <div id="subscription-required" class="error" hidden>Подписка не активна. Оплатите и напишите администратору.</div>
+      <div id="feed" class="feed" hidden></div>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

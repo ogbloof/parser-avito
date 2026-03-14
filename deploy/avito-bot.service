@@ -1,0 +1,16 @@
+[Unit]
+Description=Avito + Cian parser bot for realtors
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/avito-bot
+EnvironmentFile=/opt/avito-bot/.env
+ExecStart=/opt/avito-bot/.venv/bin/python /opt/avito-bot/bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+

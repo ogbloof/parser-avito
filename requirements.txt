@@ -1,0 +1,11 @@
+aiohttp
+aiogram>=3.0
+apscheduler
+pytz
+python-dotenv
+sqlalchemy
+selenium>=4.15.0
+webdriver-manager>=4.0.0
+selenium-wire>=5.1.0
+blinker<1.8  # для совместимости с selenium-wire (_saferef убран в 1.8+)
+playwright>=1.40.0  # альтернатива Selenium при прокси с логином (после pip: playwright install chromium)

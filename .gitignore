@@ -1,0 +1,24 @@
+# Логи
+logs/
+*.log
+
+# База данных
+*.db
+
+# Фото
+photos/
+
+# Кэш Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Токен (никогда не коммить!)
+.env
