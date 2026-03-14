@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from database import (
     SessionLocal, Ad, Photo, run_in_thread,
     STATUS_NEW, STATUS_CLOSED, STATUS_DEAL, STATUS_LOST,
-    check_subscription, get_or_create_user,
+    get_or_create_user,
 )
 from logging_config import get_logger
 
@@ -79,34 +79,31 @@ def _ad_to_dict(ad) -> dict:
     }
 
 
-async def _get_user_from_request(request: Request) -> tuple[int | None, bool]:
+async def _get_user_from_request(request: Request) -> int | None:
     init_data = request.headers.get("X-Telegram-Init-Data") or request.query.get("initData", "")
     from config import BOT_TOKEN
     validated = validate_init_data(init_data, BOT_TOKEN or "")
     if not validated:
-        return None, False
+        return None
     user = validated.get("user", {})
     user_id = user.get("id")
     if not user_id:
-        return None, False
+        return None
     await run_in_thread(get_or_create_user, user_id)
-    active = await run_in_thread(check_subscription, user_id)
-    return user_id, active
+    return user_id
 
 
 async def api_user(request: Request) -> Response:
-    user_id, active = await _get_user_from_request(request)
+    user_id = await _get_user_from_request(request)
     if user_id is None:
         return web.json_response({"error": "unauthorized"}, status=401)
-    return web.json_response({"user_id": user_id, "subscription_active": active})
+    return web.json_response({"user_id": user_id, "subscription_active": True})
 
 
 async def api_ads_new(request: Request) -> Response:
-    user_id, active = await _get_user_from_request(request)
+    user_id = await _get_user_from_request(request)
     if user_id is None:
         return web.json_response({"error": "unauthorized"}, status=401)
-    if not active:
-        return web.json_response({"error": "subscription_required"}, status=403)
 
     def fetch():
         from sqlalchemy import or_
@@ -134,11 +131,9 @@ async def api_ads_new(request: Request) -> Response:
 
 
 async def api_ads_mine(request: Request) -> Response:
-    user_id, active = await _get_user_from_request(request)
+    user_id = await _get_user_from_request(request)
     if user_id is None:
         return web.json_response({"error": "unauthorized"}, status=401)
-    if not active:
-        return web.json_response({"error": "subscription_required"}, status=403)
 
     def fetch():
         from sqlalchemy import or_
@@ -167,11 +162,9 @@ async def api_ads_mine(request: Request) -> Response:
 
 
 async def api_ads_favorite(request: Request) -> Response:
-    user_id, active = await _get_user_from_request(request)
+    user_id = await _get_user_from_request(request)
     if user_id is None:
         return web.json_response({"error": "unauthorized"}, status=401)
-    if not active:
-        return web.json_response({"error": "subscription_required"}, status=403)
 
     def fetch():
         db = SessionLocal()
@@ -192,11 +185,9 @@ async def api_ads_favorite(request: Request) -> Response:
 
 
 async def api_ads_status(request: Request) -> Response:
-    user_id, active = await _get_user_from_request(request)
+    user_id = await _get_user_from_request(request)
     if user_id is None:
         return web.json_response({"error": "unauthorized"}, status=401)
-    if not active:
-        return web.json_response({"error": "subscription_required"}, status=403)
 
     ad_id = int(request.match_info.get("id", 0))
     if not ad_id:

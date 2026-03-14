@@ -43,13 +43,11 @@
   let currentTab = "new";
   const $loading = document.getElementById("loading");
   const $error = document.getElementById("error");
-  const $subRequired = document.getElementById("subscription-required");
   const $feed = document.getElementById("feed");
 
   function hideAll() {
     $loading.hidden = true;
     $error.hidden = true;
-    $subRequired.hidden = true;
     $feed.hidden = true;
   }
 
@@ -57,11 +55,6 @@
     hideAll();
     $error.textContent = msg;
     $error.hidden = false;
-  }
-
-  function showSubRequired() {
-    hideAll();
-    $subRequired.hidden = false;
   }
 
   function renderCard(ad) {
@@ -113,11 +106,7 @@
     $loading.hidden = false;
 
     try {
-      const userRes = await fetchApi("/api/user");
-      if (!userRes.subscription_active) {
-        showSubRequired();
-        return;
-      }
+      await fetchApi("/api/user");
 
       const endpoint = currentTab === "new" ? "/api/ads/new" : currentTab === "mine" ? "/api/ads/mine" : "/api/ads/favorite";
       const { ads } = await fetchApi(endpoint);
@@ -135,8 +124,6 @@
     } catch (e) {
       if (e.status === 401) {
         showError("Авторизация не прошла. Откройте приложение из бота.");
-      } else if (e.status === 403) {
-        showSubRequired();
       } else {
         showError("Ошибка загрузки: " + (e.error || e.status || "неизвестная"));
       }

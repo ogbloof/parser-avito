@@ -19,7 +19,7 @@ from database import (
     SessionLocal, User, UserFilter, Ad, Photo, init_db, run_in_thread,
     PIPELINE_STATUSES, STATUS_NEW, STATUS_CALLED, STATUS_NO_ANSWER,
     STATUS_MEETING_SET, STATUS_DEAL, STATUS_LOST, STATUS_CLOSED,
-    check_subscription, get_or_create_user, grant_subscription,
+    get_or_create_user, grant_subscription, check_subscription,
 )
 from avito_parser import run_parser, parse_single_ad
 from cian_parser import run_cian_parser, parse_single_cian_ad
@@ -86,35 +86,16 @@ PIPELINE_LABELS = {
 }
 PAGE_SIZE = 5
 
-SUBSCRIPTION_MSG = "Подписка не активна. Оплатите и напишите администратору."
-
-
 def _is_admin(user_id: int) -> bool:
     return user_id in ADMIN_USER_IDS
 
 
 async def _require_subscription(message: types.Message) -> bool:
-    if not message.from_user:
-        return False
-    if _is_admin(message.from_user.id):
-        return True
-    await run_in_thread(get_or_create_user, message.from_user.id)
-    if await run_in_thread(check_subscription, message.from_user.id):
-        return True
-    await message.answer(SUBSCRIPTION_MSG)
-    return False
+    return bool(message.from_user)
 
 
 async def _require_subscription_cb(callback: types.CallbackQuery) -> bool:
-    if not callback.from_user:
-        return False
-    if _is_admin(callback.from_user.id):
-        return True
-    await run_in_thread(get_or_create_user, callback.from_user.id)
-    if await run_in_thread(check_subscription, callback.from_user.id):
-        return True
-    await callback.answer("Подписка не активна.", show_alert=True)
-    return False
+    return bool(callback.from_user)
 
 
 def _ad_card_text(ad, show_source=True):
@@ -228,9 +209,7 @@ def transliterate(text: str) -> str:
     return ''.join(result)
 
 async def notify_new(user_id, ad):
-    """Push-уведомление о новом объявлении (только с активной подпиской)."""
-    if not await run_in_thread(check_subscription, user_id):
-        return
+    """Push-уведомление о новом объявлении."""
     logger.info("Новое объявление %s сохранено для пользователя %s", getattr(ad, "avito_id", "?"), user_id)
     title = (ad.title or "Объявление")[:60]
     price = ad.price or "—"
@@ -252,7 +231,6 @@ async def notify_removed(user_id, ad):
 async def cmd_start(message: types.Message):
     if not message.from_user:
         return
-    await run_in_thread(get_or_create_user, message.from_user.id)
     keyboard_rows = [
         [KeyboardButton(text="🔍 Запустить поиск"), KeyboardButton(text="🆕 Новые объявления")],
         [KeyboardButton(text="📂 Мои объекты"), KeyboardButton(text="📁 Избранные")],
@@ -261,13 +239,6 @@ async def cmd_start(message: types.Message):
     if WEBAPP_URL:
         keyboard_rows.insert(0, [KeyboardButton(text="📱 Открыть приложение", web_app=WebAppInfo(url=WEBAPP_URL.rstrip("/") + "/webapp/"))])
     keyboard = ReplyKeyboardMarkup(keyboard=keyboard_rows, resize_keyboard=True)
-    if not await run_in_thread(check_subscription, message.from_user.id):
-        await message.answer(
-            "👋 <b>Парсер для риелторов</b>\n\n" + SUBSCRIPTION_MSG,
-            parse_mode="HTML",
-            reply_markup=keyboard,
-        )
-        return
     await message.answer(
         "👋 <b>Парсер для риелторов</b>\n\n"
         "— <b>Запустить поиск</b> — обновить базу по твоим фильтрам\n"
