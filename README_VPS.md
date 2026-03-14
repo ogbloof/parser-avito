@@ -1,6 +1,8 @@
-# Запуск бота на VPS (Ubuntu 24.04)
+# Запуск бота
 
-Бот для риелторов: парсинг Авито и ЦИАН, CRM-статусы, заметки, избранное, подписка, Mini App.
+**Без VPS:** см. [DEPLOY.md](DEPLOY.md) — GitHub Pages + Render.
+
+**На VPS (Ubuntu 24.04):** инструкция ниже.
 
 ## 1) Скопировать проект на сервер
 
@@ -80,7 +82,7 @@ sudo systemctl restart avito-bot
    Имя: `API_URL`, значение: URL твоего API с HTTPS (например `https://api.example.com` или `https://your-domain.com`).
 4. При push в `main` workflow сам задеплоит webapp.
 
-Страница будет по адресу: `https://<username>.github.io/<repo>/`
+Страница будет по адресу: `https://ogbloof.github.io/<repo>/` (подставь имя репо вместо `<repo>`)
 
 ### 5.2 API на VPS (nginx + HTTPS)
 
@@ -99,7 +101,7 @@ sudo systemctl restart avito-bot
    sudo certbot --nginx -d YOUR_DOMAIN
    ```
 5. В `.env` укажи:
-   - `WEBAPP_URL=https://<username>.github.io/<repo>/` — URL с GitHub Pages
+   - `WEBAPP_URL=https://ogbloof.github.io/parser-avito/` — URL с GitHub Pages (если репо `parser-avito`)
    - API доступен по `https://YOUR_DOMAIN` (nginx проксирует на порт 8080)
 
 ### 5.3 Альтернатива: всё на VPS

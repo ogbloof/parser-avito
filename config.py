@@ -60,9 +60,9 @@ PARSER_INTERVAL_MINUTES = int(_env("PARSER_INTERVAL_MINUTES", "5") or "5")
 _admin_raw = _env("ADMIN_USER_IDS", "") or ""
 ADMIN_USER_IDS = [int(x.strip()) for x in _admin_raw.split(",") if x.strip().isdigit()]
 
-# API и Mini App
-API_PORT = int(_env("API_PORT", "8080") or "8080")
-WEBAPP_URL = _env("WEBAPP_URL", "")  # https://your-domain.com
+# API и Mini App (PORT от Render/Heroku, иначе 8080)
+API_PORT = int(_env("PORT") or _env("API_PORT", "8080") or "8080")
+WEBAPP_URL = _env("WEBAPP_URL", "")  # https://ogbloof.github.io/parser-avito/ или домен
 
 # Нормализованный прокси (с подстановкой из host:port:user:pass)
 AVITO_PROXY_NORMALIZED = _normalize_proxy(AVITO_PROXY) if AVITO_PROXY else None

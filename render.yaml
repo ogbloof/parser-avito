@@ -1,0 +1,25 @@
+# Render Blueprint — бот + API
+# render.com → New → Blueprint → подключи репо
+
+services:
+  - type: web
+    name: avito-parser-bot
+    env: python
+    plan: free
+
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_USER_IDS
+        sync: false
+      - key: WEBAPP_URL
+        sync: false
+      - key: ZENROWS_API_KEY
+        sync: false
+      - key: PARSER_INTERVAL_MINUTES
+        value: "5"
