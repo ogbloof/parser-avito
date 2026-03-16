@@ -15,10 +15,20 @@ from selenium_fetcher import fetch_page_selenium
 from config import ZENROWS_API_KEY, SCRAPINGBEE_API_KEY
 
 logger = get_logger('parser')
+_last_cian_fetch_error = None
+
 _ssl = ssl.create_default_context()
 _ssl.check_hostname = False
 _ssl.verify_mode = ssl.CERT_NONE
 SOURCE_CIAN = "cian"
+
+
+def get_last_cian_fetch_error():
+    """Последняя ошибка загрузки ЦИАН (ZenRows/ScrapingBee) для вывода пользователю."""
+    global _last_cian_fetch_error
+    err = _last_cian_fetch_error
+    _last_cian_fetch_error = None
+    return err
 
 
 def _db_get_active_cian_filters():
@@ -279,6 +289,9 @@ async def _fetch_cian_page(url: str) -> str | None:
     use_zenrows = ZENROWS_API_KEY and ZENROWS_API_KEY != "YOUR_API_KEY_HERE"
     use_sb = SCRAPINGBEE_API_KEY and SCRAPINGBEE_API_KEY != "YOUR_SCRAPINGBEE_KEY_HERE"
 
+    global _last_cian_fetch_error
+    _last_cian_fetch_error = None
+
     if use_zenrows:
         params = {
             "apikey": ZENROWS_API_KEY,
@@ -296,11 +309,17 @@ async def _fetch_cian_page(url: str) -> str | None:
                 timeout=aiohttp.ClientTimeout(total=90),
                 ssl=_ssl,
             ) as r:
+                text = await r.text()
                 if r.status == 200:
-                    text = await r.text()
                     if "captcha" not in text.lower() and "доступ ограничен" not in text.lower():
                         logger.info("ЦИАН: загружено через ZenRows, %s байт", len(text))
                         return text
+                else:
+                    try:
+                        err = json.loads(text)
+                        _last_cian_fetch_error = f"ZenRows: {err.get('code', r.status)} — {err.get('title', text[:200])}"
+                    except Exception:
+                        _last_cian_fetch_error = f"ZenRows: HTTP {r.status} — {text[:200]}"
 
     if use_sb:
         api_url = f"https://app.scrapingbee.com/api/v1/?api_key={SCRAPINGBEE_API_KEY}&url={quote(url)}&render_js=true&wait=15000"
@@ -310,7 +329,10 @@ async def _fetch_cian_page(url: str) -> str | None:
                     text = await r.text()
                     logger.info("ЦИАН: загружено через ScrapingBee, %s байт", len(text))
                     return text
+                _last_cian_fetch_error = f"ScrapingBee: HTTP {r.status}"
 
+    if not ZENROWS_API_KEY or ZENROWS_API_KEY == "YOUR_API_KEY_HERE":
+        _last_cian_fetch_error = _last_cian_fetch_error or "ZENROWS_API_KEY не задан (Render → Environment)"
     return await run_in_thread(fetch_page_selenium, url)
 
 

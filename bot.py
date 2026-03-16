@@ -21,8 +21,8 @@ from database import (
     STATUS_MEETING_SET, STATUS_DEAL, STATUS_LOST, STATUS_CLOSED,
     get_or_create_user, grant_subscription, check_subscription,
 )
-from avito_parser import run_parser, parse_single_ad, test_one_avito_url
-from cian_parser import run_cian_parser, parse_single_cian_ad, test_one_cian_url
+from avito_parser import run_parser, parse_single_ad, test_one_avito_url, get_last_fetch_error
+from cian_parser import run_cian_parser, parse_single_cian_ad, test_one_cian_url, get_last_cian_fetch_error
 from selenium_fetcher import check_proxy
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pytz import timezone
@@ -529,10 +529,13 @@ async def cmd_search(message: types.Message):
         )
         return
     if no_success:
+        err_avito = get_last_fetch_error()
+        err_cian = get_last_cian_fetch_error()
+        detail = " / ".join(filter(None, [err_avito, err_cian])) or "проверь ZENROWS_API_KEY в Render → Environment и ссылки в фильтрах"
         await _answer_with_retry(
             message,
             "⚠️ Не удалось загрузить страницы (Авито/ЦИАН).\n\n"
-            "Проверь: ZENROWS_API_KEY в настройках Render, ссылки в фильтрах. Попробуй позже.",
+            f"Ошибка: {detail}\n\nПопробуй позже или проверь ключ в Render.",
         )
         return
     if total_new > 0:

@@ -15,6 +15,8 @@ from selenium_fetcher import fetch_page_selenium
 from config import ZENROWS_API_KEY, SCRAPINGBEE_API_KEY
 
 logger = get_logger('parser')
+_last_fetch_error = None  # последняя ошибка загрузки (для вывода пользователю)
+
 PHOTOS_DIR = Path("photos")
 PHOTOS_DIR.mkdir(exist_ok=True)
 
@@ -295,8 +297,17 @@ async def enrich_avito_ad_details(session, ad):
         logger.error(f"⚠️ Ошибка обогащения объявления {getattr(ad, 'id', '?')}: {e}")
         return ad
 
+def get_last_fetch_error():
+    """Возвращает последнюю ошибку загрузки (Авито/ZenRows/ScrapingBee) для вывода пользователю."""
+    global _last_fetch_error
+    err = _last_fetch_error
+    _last_fetch_error = None
+    return err
+
+
 async def fetch_with_service(session, url, service="zenrows"):
     """Универсальная функция запроса. При ZenRows RESP001 — один повтор с увеличенным wait."""
+    global _last_fetch_error
     if service == "zenrows" and ZENROWS_API_KEY != "YOUR_API_KEY_HERE":
         api_base = "https://api.zenrows.com/v1/"
         params = get_zenrows_params(url)
@@ -304,6 +315,7 @@ async def fetch_with_service(session, url, service="zenrows"):
         api_base = "https://app.scrapingbee.com/api/v1/"
         params = {"api_key": SCRAPINGBEE_API_KEY, "url": url, "render_js": "true", "wait": "15000", "premium_proxy": "true"}
     else:
+        _last_fetch_error = "ZENROWS_API_KEY не задан. Добавь ключ в Render → Environment (или в .env)."
         return None
 
     async def _do_request(req_params):
@@ -329,6 +341,7 @@ async def fetch_with_service(session, url, service="zenrows"):
         text, err_code, err_msg = await _do_request(params)
         if err_msg:
             logger.error(f"❌ {service} API ошибка: {err_msg}")
+            _last_fetch_error = f"{service}: {err_code or 'error'} — {err_msg}" if err_code or err_msg else str(err_msg)
         if text is not None:
             return text
         if service == "zenrows" and err_code == "RESP001":
@@ -339,11 +352,13 @@ async def fetch_with_service(session, url, service="zenrows"):
             text, _, err_msg2 = await _do_request(retry_params)
             if err_msg2:
                 logger.error(f"❌ {service} повтор: {err_msg2}")
+                _last_fetch_error = f"{service} (повтор): {err_msg2}"
             if text is not None:
                 return text
         return None
     except Exception as e:
         logger.error(f"Ошибка {service}: {e}")
+        _last_fetch_error = f"{service}: {type(e).__name__} — {e}"
         return None
 
 def check_content(html):
@@ -558,7 +573,7 @@ async def test_one_avito_url(url: str) -> dict:
         if not html:
             html = await run_in_thread(fetch_page_selenium, mobile_url)
     if not html:
-        result["error"] = "Не удалось загрузить страницу (проверь ZENROWS_API_KEY или прокси)"
+        result["error"] = get_last_fetch_error() or "Не удалось загрузить страницу (проверь ZENROWS_API_KEY или прокси)"
         return result
     result["html_len"] = len(html)
     content = check_content(html)
