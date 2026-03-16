@@ -534,11 +534,14 @@ async def cmd_search(message: types.Message):
         detail = " / ".join(filter(None, [err_avito, err_cian]))
         if not detail:
             await _answer_with_retry(message, "🔄 Проверяю ZenRows...")
-            detail = await fetch_zenrows_diagnostic() or "проверь ZENROWS_API_KEY в Render → Environment и ссылки в фильтрах"
+            detail = await fetch_zenrows_diagnostic() or "добавь SCRAPERAPI_API_KEY (1000 бесплатно/мес) или ZENROWS_API_KEY в Render → Environment"
+        hint = ""
+        if "AUTH004" in detail or "usage exceeded" in detail.lower() or "quota" in detail.lower():
+            hint = "\n\n💡 Исчерпан лимит запросов ZenRows. Обнови тариф на zenrows.com или дождись сброса квоты (обычно раз в месяц)."
         await _answer_with_retry(
             message,
             "⚠️ Не удалось загрузить страницы (Авито/ЦИАН).\n\n"
-            f"Ошибка: {detail}\n\nПопробуй позже или проверь ключ в Render.",
+            f"Ошибка: {detail}{hint}\n\nПопробуй позже.",
         )
         return
     if total_new > 0:

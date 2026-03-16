@@ -20,6 +20,8 @@ BOT_TOKEN = _env("BOT_TOKEN")
 
 ZENROWS_API_KEY = _env("ZENROWS_API_KEY", "YOUR_API_KEY_HERE")
 SCRAPINGBEE_API_KEY = _env("SCRAPINGBEE_API_KEY", "YOUR_SCRAPINGBEE_KEY_HERE")
+# ScraperAPI: 1000 бесплатных запросов/мес — https://www.scraperapi.com
+SCRAPERAPI_API_KEY = _env("SCRAPERAPI_API_KEY", "")
 
 # Прокси для Selenium. Форматы:
 #   http://host:port   или   http://user:pass@host:port

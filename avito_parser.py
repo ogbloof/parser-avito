@@ -12,7 +12,7 @@ from logging_config import get_logger
 from database import SessionLocal, Ad, Photo, UserFilter, run_in_thread
 from urllib.parse import quote, urlparse, parse_qs
 from selenium_fetcher import fetch_page_selenium
-from config import ZENROWS_API_KEY, SCRAPINGBEE_API_KEY
+from config import ZENROWS_API_KEY, SCRAPINGBEE_API_KEY, SCRAPERAPI_API_KEY
 
 logger = get_logger('parser')
 _last_fetch_error = None  # последняя ошибка загрузки (для вывода пользователю)
@@ -41,6 +41,15 @@ def get_scrapingbee_url(target_url):
     """ScrapingBee API"""
     encoded_url = quote(target_url, safe='')
     return f"https://app.scrapingbee.com/api/v1/?api_key={SCRAPINGBEE_API_KEY}&url={encoded_url}&render_js=true&wait=15000&premium_proxy=true"
+
+
+def get_scraperapi_params(target_url):
+    """ScraperAPI: 1000 бесплатных запросов/мес. render=true для JS (тратит больше кредитов)."""
+    return {
+        "api_key": SCRAPERAPI_API_KEY,
+        "url": target_url,
+        "render": "true",  # JS-рендеринг для Авито/ЦИАН
+    }
 
 def convert_to_mobile(url):
     """Конвертирует десктопный URL в мобильный (https://m.avito.ru/..., не www.m.avito.ru)."""
@@ -336,16 +345,22 @@ async def fetch_zenrows_diagnostic() -> str | None:
 
 
 async def fetch_with_service(session, url, service="zenrows"):
-    """Универсальная функция запроса. При ZenRows RESP001 — один повтор с увеличенным wait."""
+    """Универсальная функция запроса. Сервисы: scraperapi (дешево/бесплатно), zenrows, scrapingbee."""
     global _last_fetch_error
-    if service == "zenrows" and ZENROWS_API_KEY != "YOUR_API_KEY_HERE":
+    if service == "scraperapi" and (SCRAPERAPI_API_KEY or "").strip():
+        api_base = "https://api.scraperapi.com/"
+        params = get_scraperapi_params(url)
+    elif service == "zenrows" and ZENROWS_API_KEY != "YOUR_API_KEY_HERE":
         api_base = "https://api.zenrows.com/v1/"
         params = get_zenrows_params(url)
     elif service == "scrapingbee" and SCRAPINGBEE_API_KEY != "YOUR_SCRAPINGBEE_KEY_HERE":
         api_base = "https://app.scrapingbee.com/api/v1/"
         params = {"api_key": SCRAPINGBEE_API_KEY, "url": url, "render_js": "true", "wait": "15000", "premium_proxy": "true"}
     else:
-        _last_fetch_error = "ZENROWS_API_KEY не задан. Добавь ключ в Render → Environment (или в .env)."
+        if service == "zenrows":
+            _last_fetch_error = "ZENROWS_API_KEY не задан. Добавь ключ в Render или используй SCRAPERAPI_API_KEY (1000 бесплатно/мес)."
+        else:
+            _last_fetch_error = f"{service}: API ключ не задан."
         return None
 
     async def _do_request(req_params):
@@ -593,12 +608,17 @@ async def test_one_avito_url(url: str) -> dict:
     Возвращает dict: url_short, html_len, blocked, blocked_reason, items_count, error.
     """
     result = {"url_short": url[:60] + "..." if len(url) > 60 else url, "html_len": 0, "blocked": False, "blocked_reason": None, "items_count": 0, "error": None}
+    use_scraperapi = bool((SCRAPERAPI_API_KEY or "").strip())
     use_zenrows = ZENROWS_API_KEY and ZENROWS_API_KEY != "YOUR_API_KEY_HERE"
     mobile_url = convert_to_mobile(url)
     html = None
     connector = aiohttp.TCPConnector(ssl=ssl_context, limit=5)
     async with aiohttp.ClientSession(connector=connector) as session:
-        if use_zenrows:
+        if use_scraperapi:
+            html = await fetch_with_service(session, mobile_url, "scraperapi")
+            if not html and mobile_url != url:
+                html = await fetch_with_service(session, url, "scraperapi")
+        if not html and use_zenrows:
             html = await fetch_with_service(session, mobile_url, "zenrows")
             if not html and mobile_url != url:
                 html = await fetch_with_service(session, url, "zenrows")
@@ -620,10 +640,11 @@ async def run_parser(send_new_ad_callback=None, send_removed_ad_callback=None):
     """Основной парсер: приоритет Selenium при отсутствии API ключей, rate limiting."""
     logger.info("🚀 Запуск парсера Авито")
 
+    use_scraperapi = bool((SCRAPERAPI_API_KEY or "").strip())
     use_zenrows = ZENROWS_API_KEY and ZENROWS_API_KEY != "YOUR_API_KEY_HERE"
     use_scrapingbee = SCRAPINGBEE_API_KEY and SCRAPINGBEE_API_KEY != "YOUR_SCRAPINGBEE_KEY_HERE"
-    if not use_zenrows and not use_scrapingbee:
-        logger.info("ℹ️ Нет ZENROWS/SCRAPINGBEE — только Selenium. Рекомендуется задать ZENROWS_API_KEY в .env (свой прокси тогда не нужен).")
+    if not use_scraperapi and not use_zenrows and not use_scrapingbee:
+        logger.info("ℹ️ Нет API ключей (SCRAPERAPI/ZENROWS/SCRAPINGBEE) — только Selenium. Задай SCRAPERAPI_API_KEY для 1000 бесплатных запросов/мес.")
 
     filters = await run_in_thread(_db_get_active_filters)
     num_filters = len(filters)
@@ -651,9 +672,13 @@ async def run_parser(send_new_ad_callback=None, send_removed_ad_callback=None):
             district_filter = (getattr(user_filter, "district", "") or "").strip().lower()
 
             html = None
-            # Приоритет: платные API (обход блокировок без своего прокси) → затем Selenium/прокси
-            logger.info(f"[Парсер] Загрузка: ZenRows={use_zenrows}, ScrapingBee={use_scrapingbee}, иначе Selenium")
-            if use_zenrows:
+            # Приоритет: ScraperAPI (1000 бесплатно/мес) → ZenRows → ScrapingBee → Selenium
+            logger.info(f"[Парсер] Загрузка: ScraperAPI={use_scraperapi}, ZenRows={use_zenrows}, ScrapingBee={use_scrapingbee}, иначе Selenium")
+            if use_scraperapi:
+                html = await fetch_with_service(session, mobile_url, "scraperapi")
+                if not html and mobile_url != search_url:
+                    html = await fetch_with_service(session, search_url, "scraperapi")
+            if not html and use_zenrows:
                 html = await fetch_with_service(session, mobile_url, "zenrows")
                 if not html and mobile_url != search_url:
                     html = await fetch_with_service(session, search_url, "zenrows")
@@ -788,12 +813,12 @@ async def parse_single_ad(user_id: int, ad_url: str, max_retries=3):
         return existing
 
     html = None
-    if ZENROWS_API_KEY != "YOUR_API_KEY_HERE":
-        connector = aiohttp.TCPConnector(ssl=ssl_context)
-        async with aiohttp.ClientSession(connector=connector) as session:
-            html = await fetch_with_service(session, mobile_url, "zenrows")
-            if not html:
-                html = await fetch_with_service(session, clean_url, "zenrows")
+    connector = aiohttp.TCPConnector(ssl=ssl_context)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        if (SCRAPERAPI_API_KEY or "").strip():
+            html = await fetch_with_service(session, mobile_url, "scraperapi") or await fetch_with_service(session, clean_url, "scraperapi")
+        if not html and ZENROWS_API_KEY != "YOUR_API_KEY_HERE":
+            html = await fetch_with_service(session, mobile_url, "zenrows") or await fetch_with_service(session, clean_url, "zenrows")
     if not html:
         logger.info("🔄 Пробуем Selenium...")
         html = await run_in_thread(fetch_page_selenium, mobile_url)

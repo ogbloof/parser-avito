@@ -12,7 +12,7 @@ import aiohttp
 from logging_config import get_logger
 from database import SessionLocal, UserFilter, Ad, run_in_thread
 from selenium_fetcher import fetch_page_selenium
-from config import ZENROWS_API_KEY, SCRAPINGBEE_API_KEY
+from config import ZENROWS_API_KEY, SCRAPINGBEE_API_KEY, SCRAPERAPI_API_KEY
 
 logger = get_logger('parser')
 _last_cian_fetch_error = None
@@ -285,12 +285,29 @@ async def test_one_cian_url(url: str) -> dict:
 
 
 async def _fetch_cian_page(url: str) -> str | None:
-    """Загрузка страницы ЦИАН: ZenRows → ScrapingBee → Selenium."""
+    """Загрузка страницы ЦИАН: ScraperAPI (бесплатно) → ZenRows → ScrapingBee → Selenium."""
+    use_scraperapi = bool((SCRAPERAPI_API_KEY or "").strip())
     use_zenrows = ZENROWS_API_KEY and ZENROWS_API_KEY != "YOUR_API_KEY_HERE"
     use_sb = SCRAPINGBEE_API_KEY and SCRAPINGBEE_API_KEY != "YOUR_SCRAPINGBEE_KEY_HERE"
 
     global _last_cian_fetch_error
     _last_cian_fetch_error = None
+
+    if use_scraperapi:
+        params = {"api_key": SCRAPERAPI_API_KEY, "url": url, "render": "true"}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                "https://api.scraperapi.com/",
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=90),
+                ssl=_ssl,
+            ) as r:
+                text = await r.text()
+                if r.status == 200 and "captcha" not in text.lower() and "доступ ограничен" not in text.lower():
+                    logger.info("ЦИАН: загружено через ScraperAPI, %s байт", len(text))
+                    return text
+                if r.status != 200:
+                    _last_cian_fetch_error = f"ScraperAPI: HTTP {r.status} — {text[:150]}"
 
     if use_zenrows:
         params = {
@@ -331,8 +348,8 @@ async def _fetch_cian_page(url: str) -> str | None:
                     return text
                 _last_cian_fetch_error = f"ScrapingBee: HTTP {r.status}"
 
-    if not ZENROWS_API_KEY or ZENROWS_API_KEY == "YOUR_API_KEY_HERE":
-        _last_cian_fetch_error = _last_cian_fetch_error or "ZENROWS_API_KEY не задан (Render → Environment)"
+    if not use_scraperapi and not use_zenrows and not use_sb:
+        _last_cian_fetch_error = _last_cian_fetch_error or "Нет API ключей. Добавь SCRAPERAPI_API_KEY (1000 бесплатно/мес) или ZENROWS_API_KEY в Render → Environment."
     return await run_in_thread(fetch_page_selenium, url)
 
 
