@@ -22,7 +22,7 @@ from database import (
     get_or_create_user, grant_subscription, check_subscription,
 )
 from avito_parser import run_parser, parse_single_ad, test_one_avito_url
-from cian_parser import run_cian_parser, parse_single_cian_ad
+from cian_parser import run_cian_parser, parse_single_cian_ad, test_one_cian_url
 from selenium_fetcher import check_proxy
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pytz import timezone
@@ -1269,6 +1269,27 @@ async def cmd_check_parse(message: types.Message):
                             lines.append("\nЕсли 0 — Авито сменил вёрстку или ссылка ведёт на пустой поиск. Проверь ссылку в браузере.")
             except Exception as e:
                 lines.append(f"\n❌ Ошибка: {e}")
+
+    if cian:
+        url_cian = (cian[0].search_url or "").strip()
+        if url_cian:
+            lines.append("\n⏳ Загружаю страницу ЦИАН...")
+            try:
+                res = await test_one_cian_url(url_cian)
+                lines.append(f"\n<b>Тест ЦИАН</b> (первый фильтр):")
+                lines.append(f"URL: {res['url_short']}")
+                if res.get("error"):
+                    lines.append(f"❌ {res['error']}")
+                else:
+                    lines.append(f"HTML: {res['html_len']} байт")
+                    if res["blocked"]:
+                        lines.append("🚫 Блокировка (капча/ограничение)")
+                    else:
+                        lines.append(f"Объявлений извлечено: {res['items_count']}")
+                        if res["items_count"] == 0:
+                            lines.append("\nЕсли 0 — ЦИАН сменил вёрстку или ссылка не на поиск. Используй ссылку вида cian.ru/cat.php?... или страницу с результатами поиска.")
+            except Exception as e:
+                lines.append(f"\n❌ ЦИАН ошибка: {e}")
     await message.answer("\n".join(lines), parse_mode="HTML")
 
 

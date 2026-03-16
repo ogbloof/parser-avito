@@ -121,7 +121,7 @@ def extract_items_from_cian_html(html):
     """Извлекает объявления из страницы поиска ЦИАН (JSON или HTML)."""
     items = []
 
-    # Попытка 1: JSON в script (__initialState__, __NUXT__, или data-offers)
+    # Попытка 1: JSON в script (__initialState__, __NUXT__, offers)
     for pattern_name, pattern in [
         (
             "initialState",
@@ -132,8 +132,16 @@ def extract_items_from_cian_html(html):
             re.compile(r'"offers"\s*:\s*(\[\s*\{[^\]]+\])', re.DOTALL),
         ),
         (
+            "serpOffers",
+            re.compile(r'"serpOffers"\s*:\s*(\[[\s\S]*?\])', re.DOTALL),
+        ),
+        (
             "data-offers",
             re.compile(r'data-offers=["\'](\[.*?\]|{.*?})["\']', re.DOTALL),
+        ),
+        (
+            "offerList",
+            re.compile(r'"offerList"\s*:\s*(\[[\s\S]*?\])', re.DOTALL),
         ),
     ]:
         try:
@@ -144,9 +152,11 @@ def extract_items_from_cian_html(html):
             data = json.loads(raw)
             if isinstance(data, list):
                 offers = data
-            elif isinstance(data, dict) and "offers" in data:
-                offers = data["offers"]
+            elif isinstance(data, dict):
+                offers = data.get("offers") or data.get("serpOffers") or data.get("offerList") or []
             else:
+                continue
+            if not isinstance(offers, list):
                 continue
             for o in offers:
                 if not isinstance(o, dict):
@@ -182,41 +192,86 @@ def extract_items_from_cian_html(html):
             logger.debug(f"ЦИАН JSON {pattern_name}: {e}")
             continue
 
-    # Попытка 2: HTML — ссылки на карточки объявлений
-    # ЦИАН: /sale/flat/123456789/ или /rent/flat/... или offer/123
-    link_re = re.compile(
-        r'href="(https?://(?:www\.)?cian\.ru/(?:sale|rent)/[^"]+/(\d+)/?[^"]*)"',
-        re.I,
-    )
+    # Попытка 2: data-offer-id или data-id в разметке
+    offer_id_re = re.compile(r'data-offer-id=["\']?(\d+)["\']?|data-id=["\']?(\d+)["\']?|"offerId"\s*:\s*["\']?(\d+)["\']?', re.I)
+    for m in offer_id_re.finditer(html):
+        oid = (m.group(1) or m.group(2) or m.group(3) or "").strip()
+        if not oid or any(x["id"] == oid for x in items):
+            continue
+        idx = m.start()
+        ctx = html[max(0, idx - 200) : idx + 1500]
+        link = re.search(r'href="(https?://(?:www\.)?cian\.ru/[^"]*' + re.escape(oid) + r'[^"]*)"', ctx)
+        url = f"https://www.cian.ru/sale/flat/{oid}/" if not link else link.group(1).split('"')[0]
+        title = "Объявление ЦИАН"
+        t = re.search(r"(\d[\d\s]*)\s*₽", ctx)
+        price = t.group(0) if t else "Цена не указана"
+        items.append({"id": oid, "title": title, "price": price, "url": url, "address": ""})
+    if items:
+        logger.debug(f"ЦИАН: извлечено из data-offer-id: {len(items)}")
+        return items
+
+    # Попытка 3: HTML — ссылки на карточки (разные форматы URL)
     seen = set()
-    for m in link_re.finditer(html):
+    # Полный URL с id в конце
+    link_re1 = re.compile(r'href="(https?://(?:www\.)?cian\.ru/(?:sale|rent)/[^"]+/(\d+)/?[^"]*)"', re.I)
+    for m in link_re1.finditer(html):
         full_url, oid = m.group(1), m.group(2)
         if oid in seen:
             continue
         seen.add(oid)
-        ctx = html[max(0, m.start() - 300) : m.end() + 400]
+        idx = m.start()
+        ctx = html[max(0, idx - 300) : idx + 500]
         title = "Объявление ЦИАН"
-        t = re.search(r'<[^>]+title[^>]*>([^<]{10,120})</', ctx, re.I)
-        if not t:
-            t = re.search(r'aria-label="([^"]{10,120})"', ctx)
+        t = re.search(r'aria-label="([^"]{10,120})"', ctx)
         if t:
             title = t.group(1).strip()[:100]
         price = "Цена не указана"
         p = re.search(r"(\d[\d\s]*)\s*₽", ctx)
         if p:
             price = p.group(0)
-        items.append(
-            {
-                "id": oid,
-                "title": title,
-                "price": price,
-                "url": full_url,
-                "address": "",
-            }
-        )
+        items.append({"id": oid, "title": title, "price": price, "url": full_url, "address": ""})
     if items:
-        logger.debug(f"ЦИАН: извлечено из HTML: {len(items)}")
+        logger.debug(f"ЦИАН: извлечено из HTML ссылок: {len(items)}")
+        return items
+    # Относительные ссылки /sale/flat/123/
+    link_re2 = re.compile(r'href="/(?:sale|rent)/[^"]+/(\d+)/?[^"]*"', re.I)
+    for m in link_re2.finditer(html):
+        oid = m.group(1)
+        if oid in seen:
+            continue
+        seen.add(oid)
+        full_url = f"https://www.cian.ru/sale/flat/{oid}/"
+        idx = m.start()
+        ctx = html[max(0, idx - 300) : idx + 500]
+        title = "Объявление ЦИАН"
+        t = re.search(r'aria-label="([^"]{10,120})"', ctx)
+        if t:
+            title = t.group(1).strip()[:100]
+        price = "Цена не указана"
+        p = re.search(r"(\d[\d\s]*)\s*₽", ctx)
+        if p:
+            price = p.group(0)
+        items.append({"id": oid, "title": title, "price": price, "url": full_url, "address": ""})
+    if items:
+        logger.debug(f"ЦИАН: извлечено из относительных ссылок: {len(items)}")
     return items
+
+
+async def test_one_cian_url(url: str) -> dict:
+    """
+    Проверяет один URL ЦИАН: загрузка + извлечение объявлений.
+    Возвращает dict: url_short, html_len, blocked, items_count, error.
+    """
+    result = {"url_short": url[:60] + "..." if len(url) > 60 else url, "html_len": 0, "blocked": False, "items_count": 0, "error": None}
+    html = await _fetch_cian_page(url)
+    if not html:
+        result["error"] = "Не удалось загрузить страницу (проверь ZENROWS_API_KEY)"
+        return result
+    result["html_len"] = len(html)
+    result["blocked"] = _check_cian_blocked(html)
+    items = extract_items_from_cian_html(html)
+    result["items_count"] = len(items)
+    return result
 
 
 async def _fetch_cian_page(url: str) -> str | None:
