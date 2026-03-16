@@ -4,6 +4,7 @@ import re
 import json
 import random
 import ssl
+import time
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import quote
@@ -18,6 +19,11 @@ logger = get_logger('parser')
 _last_cian_fetch_error = None
 
 _ssl = ssl.create_default_context()
+_CIAN_DIRECT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
+}
 _ssl.check_hostname = False
 _ssl.verify_mode = ssl.CERT_NONE
 SOURCE_CIAN = "cian"
@@ -284,14 +290,45 @@ async def test_one_cian_url(url: str) -> dict:
     return result
 
 
+async def _fetch_direct_cian(url: str) -> str | None:
+    """Прямой HTTP без API. Работает, если ЦИАН не блокирует IP."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                url,
+                headers=_CIAN_DIRECT_HEADERS,
+                timeout=aiohttp.ClientTimeout(total=25),
+                ssl=_ssl,
+            ) as r:
+                if r.status != 200:
+                    return None
+                text = await r.text()
+                low = text.lower()
+                if "капча" in low or "captcha" in low or "доступ ограничен" in low:
+                    return None
+                return text
+    except Exception:
+        return None
+
+
 async def _fetch_cian_page(url: str) -> str | None:
-    """Загрузка страницы ЦИАН: ScraperAPI (бесплатно) → ZenRows → ScrapingBee → Selenium."""
+    """Загрузка: прямой запрос → ScraperAPI → ZenRows (пропуск при AUTH004) → ScrapingBee → Selenium."""
     use_scraperapi = bool((SCRAPERAPI_API_KEY or "").strip())
     use_zenrows = ZENROWS_API_KEY and ZENROWS_API_KEY != "YOUR_API_KEY_HERE"
     use_sb = SCRAPINGBEE_API_KEY and SCRAPINGBEE_API_KEY != "YOUR_SCRAPINGBEE_KEY_HERE"
+    try:
+        from avito_parser import _skip_zenrows_until
+        skip_zenrows = time.time() < _skip_zenrows_until
+    except Exception:
+        skip_zenrows = False
 
     global _last_cian_fetch_error
     _last_cian_fetch_error = None
+
+    html = await _fetch_direct_cian(url)
+    if html:
+        logger.info("ЦИАН: загружено прямым запросом (без API), %s байт", len(html))
+        return html
 
     if use_scraperapi:
         params = {"api_key": SCRAPERAPI_API_KEY, "url": url, "render": "true"}
@@ -309,7 +346,7 @@ async def _fetch_cian_page(url: str) -> str | None:
                 if r.status != 200:
                     _last_cian_fetch_error = f"ScraperAPI: HTTP {r.status} — {text[:150]}"
 
-    if use_zenrows:
+    if use_zenrows and not skip_zenrows:
         params = {
             "apikey": ZENROWS_API_KEY,
             "url": url,
@@ -334,7 +371,11 @@ async def _fetch_cian_page(url: str) -> str | None:
                 else:
                     try:
                         err = json.loads(text)
-                        _last_cian_fetch_error = f"ZenRows: {err.get('code', r.status)} — {err.get('title', text[:200])}"
+                        code = err.get("code", "")
+                        _last_cian_fetch_error = f"ZenRows: {code} — {err.get('title', text[:200])}"
+                        if code == "AUTH004":
+                            import avito_parser
+                            avito_parser._skip_zenrows_until = time.time() + 3600
                     except Exception:
                         _last_cian_fetch_error = f"ZenRows: HTTP {r.status} — {text[:200]}"
 

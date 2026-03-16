@@ -5,6 +5,7 @@ import re
 import os
 import ssl
 import json
+import time
 from pathlib import Path
 from datetime import datetime
 import aiohttp
@@ -16,6 +17,17 @@ from config import ZENROWS_API_KEY, SCRAPINGBEE_API_KEY, SCRAPERAPI_API_KEY
 
 logger = get_logger('parser')
 _last_fetch_error = None  # последняя ошибка загрузки (для вывода пользователю)
+_skip_zenrows_until = 0.0  # не вызывать ZenRows до этой метки (после AUTH004)
+
+# Заголовки как у мобильного Chrome — иногда Авито/ЦИАН отдают страницу без капчи
+DIRECT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+}
 
 PHOTOS_DIR = Path("photos")
 PHOTOS_DIR.mkdir(exist_ok=True)
@@ -314,6 +326,28 @@ def get_last_fetch_error():
     return err
 
 
+async def fetch_direct(session, url: str) -> str | None:
+    """Прямой HTTP-запрос без API (бесплатно). Работает, если сайт не блокирует IP."""
+    try:
+        async with session.get(
+            url,
+            headers=DIRECT_HEADERS,
+            timeout=aiohttp.ClientTimeout(total=25),
+            ssl=ssl_context,
+        ) as r:
+            text = await r.text()
+            if r.status != 200:
+                return None
+            # Капча/блок — не считаем успехом
+            low = text.lower()
+            if "доступ ограничен" in low or "капча" in low or "captcha" in low or "подозрительная активность" in low:
+                return None
+            return text
+    except Exception as e:
+        logger.debug("fetch_direct %s: %s", url[:50], e)
+        return None
+
+
 async def fetch_zenrows_diagnostic() -> str | None:
     """Один тестовый запрос к ZenRows. Возвращает строку ошибки или None если OK (для диагностики при сбое)."""
     if not ZENROWS_API_KEY or ZENROWS_API_KEY == "YOUR_API_KEY_HERE":
@@ -387,6 +421,9 @@ async def fetch_with_service(session, url, service="zenrows"):
         if err_msg:
             logger.error(f"❌ {service} API ошибка: {err_msg}")
             _last_fetch_error = f"{service}: {err_code or 'error'} — {err_msg}" if err_code or err_msg else str(err_msg)
+            if service == "zenrows" and err_code == "AUTH004":
+                global _skip_zenrows_until
+                _skip_zenrows_until = time.time() + 3600  # 1 ч не трогать ZenRows
         if text is not None:
             return text
         if service == "zenrows" and err_code == "RESP001":
@@ -672,13 +709,21 @@ async def run_parser(send_new_ad_callback=None, send_removed_ad_callback=None):
             district_filter = (getattr(user_filter, "district", "") or "").strip().lower()
 
             html = None
-            # Приоритет: ScraperAPI (1000 бесплатно/мес) → ZenRows → ScrapingBee → Selenium
-            logger.info(f"[Парсер] Загрузка: ScraperAPI={use_scraperapi}, ZenRows={use_zenrows}, ScrapingBee={use_scrapingbee}, иначе Selenium")
-            if use_scraperapi:
+            # 1) Прямой запрос (бесплатно), 2) ScraperAPI → ZenRows (пропуск при AUTH004) → ScrapingBee → Selenium
+            skip_zenrows = time.time() < _skip_zenrows_until
+            logger.info(f"[Парсер] Загрузка: direct→ScraperAPI={use_scraperapi}, ZenRows={use_zenrows and not skip_zenrows}, ScrapingBee={use_scrapingbee}")
+            html = await fetch_direct(session, mobile_url)
+            if html:
+                logger.info("[Парсер] Загружено прямым запросом (без API)")
+            if not html and mobile_url != search_url:
+                html = await fetch_direct(session, search_url)
+                if html:
+                    logger.info("[Парсер] Загружено прямым запросом (desktop URL)")
+            if not html and use_scraperapi:
                 html = await fetch_with_service(session, mobile_url, "scraperapi")
                 if not html and mobile_url != search_url:
                     html = await fetch_with_service(session, search_url, "scraperapi")
-            if not html and use_zenrows:
+            if not html and use_zenrows and not skip_zenrows:
                 html = await fetch_with_service(session, mobile_url, "zenrows")
                 if not html and mobile_url != search_url:
                     html = await fetch_with_service(session, search_url, "zenrows")

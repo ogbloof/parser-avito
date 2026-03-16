@@ -554,9 +554,10 @@ async def cmd_search(message: types.Message):
         hint = ""
         if "AUTH004" in detail or "usage exceeded" in detail.lower() or "quota" in detail.lower():
             hint = (
-                "\n\n💡 Варианты:\n"
-                "• Добавь SCRAPERAPI_API_KEY в Render (Environment) — 1000 бесплатных запросов/мес, парсер будет использовать его первым.\n"
-                "• Или обнови тариф на zenrows.com / дождись сброса квоты."
+                "\n\n💡 Чтобы парсер заработал сейчас:\n"
+                "1. Зарегистрируйся на scraperapi.com (бесплатно 1000 запросов/мес).\n"
+                "2. В Render → твой сервис → Environment добавь переменную SCRAPERAPI_API_KEY (значение — твой API ключ).\n"
+                "3. Сохрани и нажми Deploy. После этого парсер будет использовать ScraperAPI и не трогать ZenRows."
             )
         await _answer_with_retry(
             message,
