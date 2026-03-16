@@ -502,10 +502,36 @@ async def set_max(message: types.Message, state: FSMContext):
     except:
         await message.answer("❌ Только цифры!")
 
+def _count_user_filters(uid: int) -> int:
+    """Количество активных фильтров (Авито + ЦИАН) у пользователя. По БД текущего инстанса."""
+    db = SessionLocal()
+    try:
+        return db.query(UserFilter).filter(
+            UserFilter.user_id == uid,
+            UserFilter.is_active == True,
+            UserFilter.search_url.isnot(None),
+            UserFilter.search_url != "",
+            UserFilter.source.in_(["avito", "cian"]),
+        ).count()
+    finally:
+        db.close()
+
+
 @dp.message(Command("start_search"))
 @dp.message(F.text == "🔍 Запустить поиск")
 async def cmd_search(message: types.Message):
     if not await _require_subscription(message):
+        return
+    # Проверяем фильтры по текущему пользователю (на Render у каждого инстанса своя БД)
+    user_has_filters = (await run_in_thread(_count_user_filters, message.from_user.id)) > 0
+    if not user_has_filters:
+        await _answer_with_retry(
+            message,
+            "⚠️ Фильтры не настроены.\n\n"
+            "• Авито: /set_url — пришли ссылку с avito.ru\n"
+            "• ЦИАН: /set_cian или напиши «ЦИАН», затем ссылку с cian.ru\n\n"
+            "После настройки снова нажми «🔍 Запустить поиск».",
+        )
         return
     await _answer_with_retry(message, "🔄 Ищу по Авито и ЦИАН...")
     avito_res = await run_parser(notify_new, notify_removed) or (0, 0, 0)
@@ -517,17 +543,7 @@ async def cmd_search(message: types.Message):
     avito_new, avito_ok, avito_total = avito_res[0], avito_res[1], avito_res[2]
     cian_new, cian_ok, cian_total = cian_res[0], cian_res[1], cian_res[2]
     total_new = avito_new + cian_new
-    has_filters = avito_total + cian_total > 0
     no_success = avito_ok == 0 and cian_ok == 0
-    if not has_filters:
-        await _answer_with_retry(
-            message,
-            "⚠️ Фильтры не настроены.\n\n"
-            "• Авито: /set_url — пришли ссылку с avito.ru\n"
-            "• ЦИАН: /set_cian или напиши «ЦИАН», затем ссылку с cian.ru\n\n"
-            "После настройки снова нажми «🔍 Запустить поиск».",
-        )
-        return
     if no_success:
         err_avito = get_last_fetch_error()
         err_cian = get_last_cian_fetch_error()
