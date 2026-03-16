@@ -553,7 +553,11 @@ async def cmd_search(message: types.Message):
             detail = await fetch_zenrows_diagnostic() or "добавь SCRAPERAPI_API_KEY (1000 бесплатно/мес) или ZENROWS_API_KEY в Render → Environment"
         hint = ""
         if "AUTH004" in detail or "usage exceeded" in detail.lower() or "quota" in detail.lower():
-            hint = "\n\n💡 Исчерпан лимит запросов ZenRows. Обнови тариф на zenrows.com или дождись сброса квоты (обычно раз в месяц)."
+            hint = (
+                "\n\n💡 Варианты:\n"
+                "• Добавь SCRAPERAPI_API_KEY в Render (Environment) — 1000 бесплатных запросов/мес, парсер будет использовать его первым.\n"
+                "• Или обнови тариф на zenrows.com / дождись сброса квоты."
+            )
         await _answer_with_retry(
             message,
             "⚠️ Не удалось загрузить страницы (Авито/ЦИАН).\n\n"
