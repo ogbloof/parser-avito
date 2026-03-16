@@ -21,7 +21,7 @@ from database import (
     STATUS_MEETING_SET, STATUS_DEAL, STATUS_LOST, STATUS_CLOSED,
     get_or_create_user, grant_subscription, check_subscription,
 )
-from avito_parser import run_parser, parse_single_ad, test_one_avito_url, get_last_fetch_error
+from avito_parser import run_parser, parse_single_ad, test_one_avito_url, get_last_fetch_error, fetch_zenrows_diagnostic
 from cian_parser import run_cian_parser, parse_single_cian_ad, test_one_cian_url, get_last_cian_fetch_error
 from selenium_fetcher import check_proxy
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -531,7 +531,10 @@ async def cmd_search(message: types.Message):
     if no_success:
         err_avito = get_last_fetch_error()
         err_cian = get_last_cian_fetch_error()
-        detail = " / ".join(filter(None, [err_avito, err_cian])) or "проверь ZENROWS_API_KEY в Render → Environment и ссылки в фильтрах"
+        detail = " / ".join(filter(None, [err_avito, err_cian]))
+        if not detail:
+            await _answer_with_retry(message, "🔄 Проверяю ZenRows...")
+            detail = await fetch_zenrows_diagnostic() or "проверь ZENROWS_API_KEY в Render → Environment и ссылки в фильтрах"
         await _answer_with_retry(
             message,
             "⚠️ Не удалось загрузить страницы (Авито/ЦИАН).\n\n"

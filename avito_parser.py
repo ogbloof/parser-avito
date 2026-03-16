@@ -305,6 +305,36 @@ def get_last_fetch_error():
     return err
 
 
+async def fetch_zenrows_diagnostic() -> str | None:
+    """Один тестовый запрос к ZenRows. Возвращает строку ошибки или None если OK (для диагностики при сбое)."""
+    if not ZENROWS_API_KEY or ZENROWS_API_KEY == "YOUR_API_KEY_HERE":
+        return "ZENROWS_API_KEY не задан (Render → Environment)"
+    url = "https://www.avito.ru"
+    params = {"apikey": ZENROWS_API_KEY, "url": url, "js_render": "true", "wait": "5000"}
+    try:
+        connector = aiohttp.TCPConnector(ssl=ssl_context, limit=2)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            async with session.get("https://api.zenrows.com/v1/", params=params, timeout=aiohttp.ClientTimeout(total=25), ssl=ssl_context) as r:
+                text = await r.text()
+                if r.status != 200:
+                    try:
+                        err = json.loads(text)
+                        return f"ZenRows HTTP {r.status}: {err.get('code', '')} — {err.get('title', text[:150])}"
+                    except Exception:
+                        return f"ZenRows HTTP {r.status}: {text[:200]}"
+                if text.strip().startswith("{") and ("code" in text or "error" in text.lower()):
+                    try:
+                        err = json.loads(text)
+                        return f"ZenRows: {err.get('code', '')} — {err.get('title', str(err)[:150])}"
+                    except Exception:
+                        pass
+                return None
+    except asyncio.TimeoutError:
+        return "ZenRows: таймаут (25 сек)"
+    except Exception as e:
+        return f"ZenRows: {type(e).__name__} — {e}"
+
+
 async def fetch_with_service(session, url, service="zenrows"):
     """Универсальная функция запроса. При ZenRows RESP001 — один повтор с увеличенным wait."""
     global _last_fetch_error
@@ -355,6 +385,8 @@ async def fetch_with_service(session, url, service="zenrows"):
                 _last_fetch_error = f"{service} (повтор): {err_msg2}"
             if text is not None:
                 return text
+        if not _last_fetch_error:
+            _last_fetch_error = f"{service}: ответ без данных (code={err_code})"
         return None
     except Exception as e:
         logger.error(f"Ошибка {service}: {e}")
